@@ -1,0 +1,10 @@
+.venv
+.terraform
+function.zip
+*.tfstate*
+.terraform.lock.hcl
+.DS_Store
+authorized_key.json
+module_secrets.auto.tfvars
+src/ffmpeg
+src/ffprobe
