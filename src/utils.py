@@ -1,3 +1,4 @@
+"""Utility functions for Telegram bot actions and message handling."""
 from functools import wraps
 import re
 from telegram import ChatAction
