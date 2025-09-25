@@ -50,9 +50,7 @@ client_openai = OpenAI(
     base_url="https://llm.api.cloud.yandex.net/v1"
 )
 
-available_models = ["yandexgpt-lite", "yandexgpt", "yandexgpt-32k",
-                    "llama-lite", "llama", "qwen3-235b-a22b-fp8", 
-                    "gpt-oss-120b", "gpt-oss-20b"]
+AVAILABLE_MODELS = json.loads(os.environ["AVAILABLE_MODELS"])
 
 def load_model_and_msgs(user_id):
     """Load user's model and message history from S3."""
@@ -125,13 +123,13 @@ def set_model(update: Update, context):
     if len(context.args) != 1:
         update.message.reply_text("Использование: /set_model <model_name>," \
                                   " где model_name - одна из доступных моделей: "
-                                  + ", ".join(available_models))
+                                  + ", ".join(AVAILABLE_MODELS))
         return
     model_name = context.args[0]
 
-    if model_name not in available_models:
+    if model_name not in AVAILABLE_MODELS:
         update.message.reply_text(f"Модель {model_name} недоступна." \
-                                  " Доступные модели: {', '.join(available_models)}")
+                                  " Доступные модели: " + ", ".join(AVAILABLE_MODELS))
         return
     _, msgs = load_model_and_msgs(update.message.from_user.id)
     user_context = {"model": model_name, "messages": msgs}
