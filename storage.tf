@@ -19,6 +19,6 @@ resource "yandex_storage_object" "function-zip" {
 
 
 resource "yandex_storage_bucket" "conversation_bucket" {
-  bucket     = "${var.conversation_bucket_name}-${var.folder_id}"
+  bucket     = "${var.conversation_bucket_prefix}-${var.folder_id}"
   max_size   = 104857600
 }
