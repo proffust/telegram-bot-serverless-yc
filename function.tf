@@ -12,12 +12,13 @@ resource "yandex_function" "ai-bot-function" {
     object_name = yandex_storage_object.function-zip.key
   }
   environment = {
-    TELEGRAM_BOT_TOKEN = var.bot_token,
-    OPENAI_API_KEY = yandex_iam_service_account_api_key.sa-api-key.secret_key,
-    AWS_ACCESS_KEY_ID = yandex_iam_service_account_static_access_key.sa-static-key.access_key,
+    TELEGRAM_BOT_TOKEN    = var.bot_token,
+    OPENAI_API_KEY        = yandex_iam_service_account_api_key.sa-api-key.secret_key,
+    AWS_ACCESS_KEY_ID     = yandex_iam_service_account_static_access_key.sa-static-key.access_key,
     AWS_SECRET_ACCESS_KEY = yandex_iam_service_account_static_access_key.sa-static-key.secret_key,
-    YANDEX_CLOUD_FOLDER = var.folder_id
-    CONVERSATION_BUCKET = yandex_storage_bucket.conversation_bucket.bucket
+    YANDEX_CLOUD_FOLDER   = var.folder_id
+    CONVERSATION_BUCKET   = yandex_storage_bucket.conversation_bucket.bucket
+    AVAILABLE_MODELS      = jsonencode(var.available_models)
   }
   depends_on = [
     yandex_storage_object.function-zip,
