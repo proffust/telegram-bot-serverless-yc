@@ -7,6 +7,10 @@ import os
 import json
 import logging
 import re
+import time
+from uuid import uuid4
+from requests import post
+import httpx
 from boto3 import session as boto3_session
 
 from telegram.ext import (
@@ -36,6 +40,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 BUCKET = os.environ["CONVERSATION_BUCKET"]
 YANDEX_CLOUD_FOLDER = os.environ.get("YANDEX_CLOUD_FOLDER")
+GIGACHAT_CREDENTIALS = os.environ.get("GIGACHAT_CREDENTIALS")
 
 bot = Bot(token=TOKEN)
 dispatcher = Dispatcher(bot, None, use_context=True) # type: ignore[reportCallIssue]
@@ -46,11 +51,12 @@ s3 = session.client(
     endpoint_url='https://storage.yandexcloud.net'
 )
 
-client_openai = OpenAI(
-    base_url="https://llm.api.cloud.yandex.net/v1"
-)
+client_openai = OpenAI()
 
-AVAILABLE_MODELS = json.loads(os.environ["AVAILABLE_MODELS"])
+AVAILABLE_MODELS_YANDEX = json.loads(os.environ["AVAILABLE_MODELS"])["yandex"]
+AVAILABLE_MODELS_SBER = json.loads(os.environ["AVAILABLE_MODELS"])["sber"]
+
+AVAILABLE_MODELS = AVAILABLE_MODELS_YANDEX + AVAILABLE_MODELS_SBER
 
 def load_model_and_msgs(user_id):
     """Load user's model and message history from S3."""
@@ -58,7 +64,7 @@ def load_model_and_msgs(user_id):
         file_list = s3.list_objects(Bucket=BUCKET)['Contents']
     except KeyError:
         file_list = [{"Key":"0"}]
-    if user_id in [int(f['Key']) for f in file_list]:
+    if str(user_id) in [f['Key'] for f in file_list]:
         user_context = json.loads(s3.get_object(Bucket=BUCKET,
                                                 Key=str(user_id))['Body'].read().decode('utf-8'))
         model_name = user_context['model']
@@ -68,8 +74,97 @@ def load_model_and_msgs(user_id):
         msgs = []
         s3.put_object(Bucket=BUCKET,
                       Key=str(user_id),
-                      Body=b'{"model": "yandexgpt", "messages": []}')
+                      Body=json.dumps({"model": "yandexgpt",
+                                       "messages": []}).encode('utf-8'))
     return model_name, msgs
+
+def retreive_sber_token() -> dict:
+    """Get new sber token for OpenAI API"""
+    try:
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "RqUID": str(uuid4()),
+            "Authorization": f"Bearer {GIGACHAT_CREDENTIALS}"
+        }
+        response = post(url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+                                data="scope=GIGACHAT_API_PERS",
+                                headers=headers,
+                                verify=False,
+                                timeout=45)
+        return response.json()
+    except Exception as e: # pylint: disable=broad-except
+        return {"error": str(e)}
+
+def load_sber_token() -> str:
+    """Load auth token for sber API, if expired - retreive new and return this"""
+    try:
+        file_list = s3.list_objects(Bucket=BUCKET)['Contents']
+    except KeyError:
+        file_list = [{"Key":"0"}]
+    token_info = {}
+    if "sber_token_info" in [f['Key'] for f in file_list]:
+        token_info = json.loads(s3.get_object(Bucket=BUCKET,
+                                              Key="sber_token_info")['Body'].read().decode('utf-8'))
+        if token_info["expires_at"]<int(time.time()*1000):
+            print("token expired, retrive new")
+            response = retreive_sber_token()
+            if not response.get("error"):
+                s3.put_object(Bucket=BUCKET,
+                              Key="sber_token_info",
+                              Body=json.dumps(response).encode('utf-8'))
+                return response["access_token"]
+            return ""
+        print("token not expired, return old")
+        return token_info["access_token"]
+    print("file with token not found, retrive new")
+    response = retreive_sber_token()
+    if not response.get("error"):
+        s3.put_object(Bucket=BUCKET,
+                        Key="sber_token_info",
+                        Body=json.dumps(response).encode('utf-8'))
+        return response["access_token"]
+    return ""
+
+
+def ask_neural(user_id: int, text: str) -> str:
+    """Send request to neural net and return answer"""
+    model_name, msgs = load_model_and_msgs(user_id)
+    msgs.append({"role": "user", "content": text})
+    answer = ""
+    if model_name in AVAILABLE_MODELS_YANDEX:
+        response = client_openai.chat.completions.create(
+            model=f"gpt://{YANDEX_CLOUD_FOLDER}/{model_name}/latest",
+            messages=msgs
+        )
+        if response.choices[0].message.content is not None:
+            answer = response.choices[0].message.content
+
+    if model_name in AVAILABLE_MODELS_SBER:
+        token = load_sber_token()
+        if token:
+            httpx_client = httpx.Client(
+                http2=True,
+                verify=False
+            )
+            client_giga = OpenAI(
+                            api_key=token,
+                            base_url="https://gigachat.devices.sberbank.ru/api/v1",
+                            http_client=httpx_client
+                        )
+            response = client_giga.chat.completions.create(
+                model=model_name,
+                messages=msgs
+            )
+        if response.choices[0].message.content is not None:
+            answer = response.choices[0].message.content
+
+    if answer:
+        msgs.append({"role": "assistant", "content": answer})
+        user_context = {"model": model_name, "messages": msgs}
+        s3.put_object(Bucket=BUCKET,
+                    Key=str(user_id),
+                    Body=json.dumps(user_context).encode('utf-8'))
+    return answer
 
 @send_typing_action
 def start(update: Update, _):
@@ -90,19 +185,8 @@ def clear_context(update: Update, _):
 def process_message(update: Update, context):
     """Process a text message from the user."""
     chat_id = update.message.chat_id
-    model_name, msgs = load_model_and_msgs(update.message.from_user.id)
-    msgs.append({"role": "user", "content": update.message.text})
-    response = client_openai.chat.completions.create(
-        model=f"gpt://{YANDEX_CLOUD_FOLDER}/{model_name}/latest",
-        messages=msgs
-    )
-    message = response.choices[0].message.content or ""
+    message = ask_neural(update.message.from_user.id, update.message.text)
     if message:
-        msgs.append({"role": "assistant", "content": message})
-        user_context = {"model": model_name, "messages": msgs}
-        s3.put_object(Bucket=BUCKET,
-                    Key=str(update.message.from_user.id),
-                    Body=json.dumps(user_context).encode('utf-8'))
         chunks = split_markdown_message_safe(message)
         for chunk in chunks:
             context.bot.send_message(
@@ -184,19 +268,8 @@ def process_voice_message(update: Update, context):
         speech_text = ' '.join([str(res.normalized_text) for res in result])
     except Exception as e: # pylint: disable=broad-except
         update.message.reply_text(f"Не удалось распознать сообщение: {e}")
-    model_name, msgs = load_model_and_msgs(update.message.from_user.id)
-    msgs.append({"role": "user", "content": speech_text})
-    response = client_openai.chat.completions.create(
-        model=f"gpt://{YANDEX_CLOUD_FOLDER}/{model_name}/latest",
-        messages=msgs
-    )
-    message = response.choices[0].message.content or ""
+    message = ask_neural(update.message.from_user.id, speech_text)
     if message:
-        msgs.append({"role": "assistant", "content": message})
-        user_context = {"model": model_name, "messages": msgs}
-        s3.put_object(Bucket=BUCKET,
-                    Key=str(update.message.from_user.id),
-                    Body=json.dumps(user_context).encode('utf-8'))
         model_tts = model_repository.synthesis_model()
         result = model_tts.synthesize(message, raw_format=False)
         if isinstance(result, AudioSegment):

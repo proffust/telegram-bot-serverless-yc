@@ -4,3 +4,4 @@ yandex-speechkit==1.5.0
 loguru==0.7.3
 boto3==1.40.17
 openai==1.99.9
+httpx[http2]
