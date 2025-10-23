@@ -23,7 +23,20 @@ variable bot_token {
   description = "Telegram bot token"
 }
 
-variable available_models {
+variable available_models_yandex {
   type = list(string)
   default = []
+  description = "Available models for yandex ML API"
+}
+
+variable available_models_sber {
+  type = list(string)
+  default = []
+  description = "Available models for Sber API"
+}
+
+variable "gigachat_auth" {
+  type = string
+  default = ""
+  description = "Auth token for Sber Gigachat"
 }
