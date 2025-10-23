@@ -1,3 +1,10 @@
+locals {
+  available_models = {
+    yandex = var.available_models_yandex
+    sber   = var.available_models_sber
+  }
+}
+
 resource "yandex_function" "ai-bot-function" {
   name               = "telegram-ai-bot-serverless"
   description        = "Telegram AI bot serverless function"
@@ -14,11 +21,16 @@ resource "yandex_function" "ai-bot-function" {
   environment = {
     TELEGRAM_BOT_TOKEN    = var.bot_token,
     OPENAI_API_KEY        = yandex_iam_service_account_api_key.sa-api-key.secret_key,
+    OPENAI_BASE_URL       = "https://llm.api.cloud.yandex.net/v1"
     AWS_ACCESS_KEY_ID     = yandex_iam_service_account_static_access_key.sa-static-key.access_key,
     AWS_SECRET_ACCESS_KEY = yandex_iam_service_account_static_access_key.sa-static-key.secret_key,
-    YANDEX_CLOUD_FOLDER   = var.folder_id
-    CONVERSATION_BUCKET   = yandex_storage_bucket.conversation_bucket.bucket
-    AVAILABLE_MODELS      = jsonencode(var.available_models)
+    YANDEX_CLOUD_FOLDER   = var.folder_id,
+    CONVERSATION_BUCKET   = yandex_storage_bucket.conversation_bucket.bucket,
+    AVAILABLE_MODELS      = jsonencode(local.available_models),
+    GIGACHAT_CREDENTIALS  = var.gigachat_auth,
+    GIGACHAT_SCOPE        = "GIGACHAT_API_PERS",
+    GIGACHAT_BASE_URL     = "https://gigachat.devices.sberbank.ru/api/v1",
+    GIGACHAT_VERIFY_SSL_CERTS = "False"
   }
   depends_on = [
     yandex_storage_object.function-zip,
